@@ -1,6 +1,6 @@
-# Omicron Hong Kong Modeling Using SEIR Framework to study vaccination modelling
+# Hong Kong Omicron Epidemic Modeling Using SEIR Framework
 
-This repository contains basic scripts and data to simulate the Omicron outbreak using a deterministic SEIIR model with observational processes for severe health outcomes incidence. 
+This repository contains scripts and data to model the basic framework for the Omicron outbreak. This uses a deterministic SEIIR model with observational processes for severe health outcomes incidence. 
 The model is designed to estimate hospitalizations, severe cases, and deaths incidence and the total infecitons, incorporating vaccination and social mixing dynamics.
 
 ## Repository Structure
@@ -17,7 +17,7 @@ Preparing parameters
 This script contains the core functions for the SEIR model and observational processes:
 
 seiir.model: Implements the deterministic SEIR system with vaccination and infection dynamics.
-TransRep: Combines the SEIR model with observational processes to simulate severe health outcomes (hospitalizations, severe cases, deaths) and outputs daily incidence rates.
+TransRep: Combines the SEIR model with observational processes (severe disease delay pmfs) to simulate severe health outcomes (hospitalizations, severe cases, deaths) and outputs daily incidence rates.
 Includes utility functions for age group conversions and slope calculations for severe outcome probabilities.
 
 1.3 Model_run.R
