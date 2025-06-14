@@ -1,11 +1,5 @@
 # INTRODUCTION ------------------------------------------------------------
 
-
-# VERSION- VC.9.3 
-
-##VERSION##############
-# VERS            <- 'vers.10'
-
 #Modified from Corbella et al 2017 script. 
 
 # EPIDEMIC FUNCTION--
@@ -13,17 +7,16 @@
 #       (i.e. simulator of the discrete time 
 #       deterministic SEEIR model and the observational
 #       process)
+
 'Function:
   1) seiir.model
-  2) GetProbwtDays
-  3) TransRep = 1) seiir.model + 2) GetProbwtDays'
+  2) TransRep = 1) seiir.model + Observational process ( lines 613- 660)'
 
 #PACKAGES##########
 pacman::p_load(msm,car,tmvtnorm,deSolve,dplyr, pscl,surveillance,  readr, progress, tidyverse,matrixStats, data.table, coda,socialmixr)
 
 
-# EPIDEMIC FUNCTION -------------------------------------------------------
-# TRANSMISSION MODEL
+###1) TRANSMISSION COMPONENT---------------------------------------------
 # function to solve the SEEIIR deterministic continuous time system of 
 # equation at specific time points.
 #
@@ -35,7 +28,7 @@ pacman::p_load(msm,car,tmvtnorm,deSolve,dplyr, pscl,surveillance,  readr, progre
 #             susceptibility, (alpha) and proportion asymptomatic (keppa)
 #           
 #
-# Returns:
+#
 
 seiir.model <- function (t, x, params) {  
   Suv<- x[1:10]
@@ -288,7 +281,7 @@ seiir.model <- function (t, x, params) {
 
 
 
-
+# Funciton to map the amplification factor delta for a set of amplification over time. 
 Age_Spec_Slope<-function(DELTA, LENGTH){
   sequences_list <- map(DELTA, ~seq(1, .x, length.out = LENGTH))
   slope <- as.matrix(do.call(cbind, sequences_list))
@@ -296,9 +289,7 @@ Age_Spec_Slope<-function(DELTA, LENGTH){
   return(slope)
 }
 
-
-
-#functino to reduce the 10 bands to 5 age groups
+#Function to reduce the 10 bands to 5 age groups
 Reduce10bands_a5bands<-function(mat10bands){
   colnames(mat10bands)<-gsub("\\.0_5","\\.a1",colnames(mat10bands))
   colnames(mat10bands)<-gsub("6_11","a1",colnames(mat10bands))
@@ -326,10 +317,10 @@ Reduce10bands_a5bands<-function(mat10bands){
 
 
 
-
-# COMBINATION OF THE  TRANSMISSION MODEL############
-
-# Outputs the estimated Daily, Hosp, SCC, Deaths from a SEEIIR
+# EPIDMIC MODEL ------------------------------------------------------------- ############
+# Combines SEIIR model (severe disease process) and the observationa process 
+# Function to organise inputs, solve SEIIR (transmission component) where the Infected symptomatic or used to estiamt the severe disease incidence   
+# Outputs the estimated Daily, Hosp, SCC, Deaths incidence
 # epidemic model
 #
 #Parameters
@@ -610,12 +601,12 @@ TransRep <- function(
   }
   
   
+ ##OBSERVATIONAL COMPONENT-------------------------------------------------------------------------------------#
+   ##Severe Health - convolution ---output daily counts----
   
-  ##SH - convolution ---output daily counts----
   DaysIndy_0<-matrix(0,nrow = nrow(D_Totinf), ncol = 20 )
   pIndy_l<-list(pHosp_l,pSCC_l,pDeath_l)
   # ind = Sev_indicators[1]
-  
   
   DaysIndicators_l<-lapply(Sev_indicators, function(ind) {
     
