@@ -14,7 +14,7 @@ Loading necessary data, such as population census and vaccination rates.
 Preparing parameters
 
 #### 1.2 Model_TransObs_ftns.R
-This script contains the core functions for the SEIR model and observational processes:
+This script contains the core functions for the epidemic model framework with the two major components the SEIR model (seiir.model) and observational processes (lines 604-682)
 
 seiir.model: Implements the deterministic SEIR system with vaccination and infection dynamics.
 TransRep: Combines the SEIR model with observational processes (severe disease delay pmfs) to simulate severe health outcomes (hospitalizations, severe cases, deaths) and outputs daily incidence rates.
