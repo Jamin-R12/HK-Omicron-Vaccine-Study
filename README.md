@@ -24,23 +24,20 @@ Includes utility functions for age group conversions and slope calculations for 
 This script runs the model and visualizes the results:
 
 Model Execution: Calls the initialization (Model_Inputs.R) and SEIR/observation functions (Model_TransObs_ftns.R) to simulate daily infections and severe health outcomes.
-Visualization: Generates plots of daily incidences of infections, hospitalizations, severe cases, and deaths, stratified by age and vaccination status.
+Output: Generates plots of daily incidences of infections, hospitalizations, severe cases, and deaths, stratified by age and vaccination status.
 
 #### 1.4 Sims/Sim_ftn.R
 Creates EpiWaveSimulation function, which runs the epidemic model (TransRep) with a various inputs, balise coverages, vaccinations rates, or time_varying_iota. 
-
-Outputs: The specific severe disease and infectino incidence.
-
+Outputs: The specific severe disease and infection incidence.
 
 #### 1.5 Sims/Sims_VacBasChg.R
 
 Sets up counterfactual simuations, requires  model inputs, vaccination data and other model inputs. Loops over ages, doses, coverage change using EpiWaveSimulation function
 Ouput: Counterfactul results
 
-
 #### 1.6 Fig/Fig_RisksVEDelt.R
 
-Plots a range of calibrated model parameters, baseline risk of severe disease, vaccine effectiveness, and the peak period amplificaiton factor\
+Plots a range of calibrated model parameters, baseline risk of severe disease, vaccine effectiveness, and the peak period amplificaiton factor
 
 #### 1.7 Fig/Fig_BaseChange.R
 
