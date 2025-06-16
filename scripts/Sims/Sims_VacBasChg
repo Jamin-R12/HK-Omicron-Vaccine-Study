@@ -1,0 +1,203 @@
+#Model runs a simulation based on the calibrated model outputs from the SEIR model
+
+
+
+#PACKAGES##########
+pacman::p_load(tidyverse,readr,deSolve, data.table,coda, mcmcse,RColorBrewer)
+
+# setting/sourcing script ----------------------------------------------------------
+source("scripts/Model/Model_Inputs.R") # model input
+source("scripts/Model/Model_TransObs_ftns.R") # epidemic model: seir and observational model functions.
+source("scripts/Sim/Sim_ftn") # rerun epidemic model for counterfacutal sims. 
+
+
+data.input<-readRDS("temp_data/sample_med_init.rds")  # Place holder, median  data. 
+vacrates<-readRDS('temp_data/Base_Vacrates_Data.rds')
+
+
+ages_10bds<-c('0_5','6_11','12_17','18_29','30_39','40_49','50_59','60_69','70_79','80+')
+sample_data <- as.data.frame(t(data.input))
+sample_data$chain<-1
+
+
+#-----#
+### sample - homogenize
+fix_hosp<-sample_data %>%
+  select(contains('hosp_delta')) %>%
+  mutate(value = rowMeans(.[,1:ncol(.)])) %>%
+  mutate(across(contains('hosp_delta'), ~value)) %>%
+  select(-value)
+
+sample_data %>%
+  mutate(across(contains('hosp_delta'), ~fix_hosp[[cur_column()]])) -> sample_data
+
+fix_scc<-sample_data %>%
+  select(contains('SCC_delta')) %>%
+  mutate(value = rowMeans(.[,1:ncol(.)])) %>%
+  mutate(across(contains('SCC_delta'), ~value)) %>%
+  select(-value)
+sample_data %>%
+  mutate(across(contains('SCC_delta'), ~fix_scc[[cur_column()]])) -> sample_data
+
+fix_death<-sample_data %>%
+  select(contains('death_delta')) %>%
+  mutate(value = rowMeans(.[,1:ncol(.)])) %>%
+  mutate(across(contains('death_delta'), ~value)) %>%
+  select(-value)
+
+sample_data %>%
+  mutate(across(contains('death_delta'), ~fix_death[[cur_column()]])) -> sample_data
+
+
+#Method: Counter factual scenario, increase baseline vaccination coverage######################
+
+#Function to modify vaccination baseline coverages, within loop - age specific
+FlucBaseVacRates<- function(BASE_INCR, AGESTRATA, DOSE_SEC){
+  
+  AgeBaseMod<-vacrates %>% 
+    filter(age_grp == AGESTRATA)
+  
+  if(dose_sec == 'Booster'){
+    if(all(between(AgeBaseMod$Cu_3rd_p+BASE_INCR,0,1)) &
+       all(AgeBaseMod$Cu_3rd_p[AgeBaseMod$daily_date==studydates[2]]+BASE_INCR<= AgeBaseMod$Cu_2nd_p[AgeBaseMod$daily_date==studydates[2]-181])
+    ){
+      #modify 3rd dose 
+      AgeBaseMod<-AgeBaseMod %>% 
+        mutate(
+          Cu_3rd_p = Cu_3rd_p + BASE_INCR,
+          dose_sec = DOSE_SEC,
+          base_chg = BASE_INCR,
+          BaseIncrRes  = 'change')
+      print('changed')
+    } else {
+      AgeBaseMod$dose_sec = DOSE_SEC
+      AgeBaseMod$base_chg = BASE_INCR
+      AgeBaseMod$BaseIncrRes<-'skip'
+      print('skip')
+    }
+    
+  } else if (dose_sec == '2nd dose'){    
+    if(all(between(AgeBaseMod$Cu_2nd_p+BASE_INCR,0,1)) &
+       all(
+         AgeBaseMod$Cu_2nd_p[AgeBaseMod$daily_date==studydates[2]]+BASE_INCR<=AgeBaseMod$Cu_1st_p[AgeBaseMod$daily_date==studydates[2]-27]+BASE_INCR &
+         #check all good midway. 
+         AgeBaseMod$Cu_2nd_p[AgeBaseMod$daily_date==studydates[1]+50]+BASE_INCR<=AgeBaseMod$Cu_1st_p[AgeBaseMod$daily_date==studydates[1]+23]+BASE_INCR
+       )
+    ){
+      #modify 2nd dose & 1st
+      AgeBaseMod<-AgeBaseMod %>%
+        mutate(Cu_2nd_p = Cu_2nd_p + BASE_INCR,
+               Cu_1st_p = Cu_1st_p + BASE_INCR,
+               Cu_1st_p = ifelse(Cu_1st_p>1,1,Cu_1st_p),
+               # Cu_1st_n = ifelse(Cu_1st_p==1,first(Cu_1st_n[Cu_1st_p==1]),Cu_1st_n),
+               dose_sec = DOSE_SEC,
+               base_chg = BASE_INCR,
+               BaseIncrRes  = 'change')
+      
+      print('changed')
+      
+    } else{
+      AgeBaseMod$dose_sec = DOSE_SEC
+      AgeBaseMod$base_chg = BASE_INCR
+      AgeBaseMod$BaseIncrRes<-'skip'
+      print('skip')
+    }
+  } 
+  
+  vacrate_v<-vacrates %>% 
+    arrange(age_grp) %>%
+    filter(age_grp != AGESTRATA) %>%
+    bind_rows(AgeBaseMod) # account for 5% of people who are not residents Adding in the modified group to the non-modifie
+  
+  
+  base_1st_cov0 = vacrate_v %>%
+    arrange(age_grp) %>%
+    filter(daily_date== studydates[1]) %>%
+    ungroup %>% 
+    select(Cu_1st_p) %>%
+    unlist()
+  names(base_1st_cov0) = paste0(ages_10bds,'d1')
+  
+  base_2nd_cov0 = vacrate_v %>% 
+    arrange(age_grp) %>%
+    filter(daily_date== studydates[1]) %>%
+    ungroup %>% 
+    select(Cu_2nd_p) %>%
+    unlist()
+  names(base_2nd_cov0) = paste0(ages_10bds,'d2')
+  
+  #get cumulative proportions at start, change and end point dates, respective to each age group
+  base_3rd_cov0<- vacrate_v %>% 
+    arrange(age_grp) %>%
+    filter(daily_date== studydates[1]) %>%
+    ungroup %>% 
+    select(Cu_3rd_p) %>%
+    unlist()
+  names(base_3rd_cov0) = paste0(ages_10bds,'d3')
+  
+  
+  
+  return(list(base_1st_cov0, base_2nd_cov0, base_3rd_cov0,AgeBaseMod))
+}
+
+
+
+#loop - age specific
+ages_10bds_fancy<-gsub("_","-",ages_10bds)
+base_incr_v<-seq(-0.9,0.9,0.1)
+base_incr_v = base_incr_v
+OptimResults_Sim3<-data.frame()
+thinning_ind=1
+
+ages_10bds_fancy<-gsub("_","-",ages_10bds)
+SKIP_OUTPUT=FALSE
+dose_sec_v= c('2nd dose', 'Booster')
+
+
+###loop to generate contractual results ß#######
+for(base_incr in base_incr_v){
+  for( agestrata in ages_10bds_fancy){
+    for( dose_sec in dose_sec_v){
+      
+      basesimout<-FlucBaseVacRates(BASE_INCR=base_incr, AGESTRATA=agestrata, DOSE_SEC=dose_sec)
+      
+      
+      base_1st_covMod3<-basesimout[[1]]
+      base_2nd_covMod3<-basesimout[[2]]
+      base_3rd_covMod3<-basesimout[[3]]
+      AgeBaseMod<-basesimout[[4]]
+      
+      if( all(AgeBaseMod$BaseIncrRes=='skip') ){
+        next
+      }
+      
+      OutputSim_Mth3<-EpiWaveSimulation(SIMULATION   =  paste0('Timevary_Age_FixDelta',agestrata,'BaseIncr_',base_incr,'_',dose_sec),
+                                        SAMPLE_DATA  =  sample_data,  
+                                        THINNING     =  thinning_ind,
+                                        BASE_1st_COV =  base_1st_covMod3,
+                                        BASE_2nd_COV =  base_2nd_covMod3,
+                                        BASE_3rd_COV =  base_3rd_covMod3,
+                                        PI_V1        =  pi_v1_0,
+                                        PI_V2        =  pi_v2_0,
+                                        PI_V3        =  pi_v3_0
+      )
+
+      print(paste("Agestrata: ", which(agestrata==ages_10bds_fancy),'of',length(ages_10bds_fancy),
+                  "| shift: ", which(base_incr==base_incr_v),'of',length(base_incr_v),
+                  "| dose: ", which(dose_sec==dose_sec_v),'of',length(dose_sec_v)))
+      
+      OptimResults_Sim3<-OptimResults_Sim3 %>% bind_rows(
+        OutputSim_Mth3$state_output%>%
+          mutate(version = "Shifting start",
+                 base_chg = base_incr,
+                 age_mod = agestrata,
+                 thinning_ind = thinning_ind,
+                 dose = dose_sec)
+      )
+      
+    }
+    
+  }
+}
+
+OptimResults_Sim3
