@@ -1,0 +1,187 @@
+#Plots results outputed from the counterfactual simualtions in Sims_VacBasChg.R
+
+
+
+
+#PACKAGES##########
+pacman::p_load(tidyverse,ggplot2,readr, data.table,RColorBrewer, gridExtra, grid, ggpmisc, Hmisc,broom, patchwork, scales,cowplot,patchwork,scales, cowplot,dplyr,tidyr,flextable)
+
+
+#_________________#######
+
+df_base_series<-readRDS('temp_data/CounterSims_BaseChange.rds')
+sle_by_agegrp<-readRDS("temp_data/sle_by_agegrp.rds")
+
+
+# cleans series specifc analysis
+df_base_rasrds2<-df_base_series %>% 
+  select(-thinning_ind) %>% 
+  group_by(name, state, age_mod, base_chg, dose, samp_thin, chain) %>%
+  #create new Id with sampthin and chain combnined
+  mutate(samp_chain= paste0(samp_thin,'_',format(chain, scientific = FALSE, digits = 2))) %>% 
+  ungroup() %>% 
+  select(-samp_thin,-chain, -name)
+
+
+
+#calc to get the yyl
+df_base_rasrds2Interim<-df_base_rasrds2 %>%
+  group_by(samp_chain, dose,age_mod,base_chg, state) %>%
+  bind_rows(
+    df_base_rasrds2Interim %>% 
+      filter(state == 'death') %>% 
+      group_by(samp_chain, dose,age_mod,base_chg, state) %>%
+      left_join(sle_by_agegrp %>% 
+                  select(sle, ages), by = c('age' = 'ages')) %>%
+      mutate(value = value* sle,
+             state = 'yll_death') %>% 
+      select(-sle))
+
+
+
+####clean  datasets-------#
+df_base_raw_Samps<-df_base_rasrds2Interim %>% 
+  mutate(
+    base_chg = round(base_chg, 1)*100) %>% 
+  group_by(samp_chain,  age_mod,dose,  base_chg, state,age ) %>% 
+  summarise(
+    value = sum(value)) %>%  
+  mutate(
+    age_mod = gsub("_","-",age_mod),
+    age_mod = factor(age_mod, levels = c("0-5","6-11","12-17","18-29",'30-39','40-49','50-59','60-69','70-79',"80+",'All-ages')),
+    age = case_when(
+      age=='a1' ~ '0-17',
+      age=='a2' ~ '18-39',
+      age=='a3' ~ '40-59',
+      age=='a4' ~ '60-79',
+      age=='a5' ~ '80+',
+      TRUE ~ age), 
+    age = factor(age, levels = c('0-17','18-39','40-59','60-79','80+'))) %>% 
+  #rename states 'hosp'
+  mutate(
+    state = case_when(
+      state == "hosp" ~ "Hospitalisations",
+      state == "death" ~ "Mortalities",
+      state == "scc" ~ "Severe or critical cases",
+      state == "conv_infect" ~ "Infections",
+      state == 'yll_death' ~ 'Years of life lost',
+      TRUE ~ state
+    ),
+    #factorise by severity
+    state = factor(state, levels = c("Infections","Hospitalisations","Severe or critical cases","Mortalities","Years of life lost"))
+  ) %>% 
+  group_by(samp_chain,  age_mod,dose,  state,age ) %>% 
+  mutate(
+    ref_value = value[base_chg == 0]) %>%
+  mutate(
+    dose = factor(dose, levels = c("2nd dose", "Booster", "Combined")))
+
+
+
+
+df_base_MW<-df_base_raw_Samps %>% 
+  group_by(samp_chain,dose, age_mod,base_chg, state) %>% 
+  summarise(
+    value = sum(value),
+    ref_value = sum(ref_value)) 
+
+df_base<-df_base_MW %>% 
+  group_by( dose, state, age_mod, base_chg) %>%
+  summarise(
+    difference_absolute   = value - ref_value, 
+    difference_relative   = difference_absolute/ref_value) %>% 
+  group_by(state,dose, age_mod, base_chg) %>%
+  summarise(
+    abs_diff  = quantile(difference_absolute, probs = 0.5),
+    abs_lower = quantile(difference_absolute, probs = 0.025),
+    abs_upper = quantile(difference_absolute, probs = 0.975),
+    
+    perc_diff = quantile(difference_relative, probs = 0.5),
+    perc_lower = quantile(difference_relative, probs = 0.025),
+    perc_upper = quantile(difference_relative, probs = 0.975)
+  ) %>% 
+  mutate(perc_diff = perc_diff*100,
+         perc_lower = perc_lower*100,
+         perc_upper = perc_upper*100)
+
+
+
+
+##plot: events mth3 ----
+df_base_plot_val<-df_base %>% 
+  filter(state != "Severe or critical cases") %>%
+  filter(age_mod != "All-ages") %>%
+  filter(dose != "Combined") %>%
+  #renames mortalies deahs and fix factors
+  mutate(state = case_when(
+    state == "Years life lost" ~ "Years of life lost",
+    state == "Mortalities" ~ "Deaths",
+    TRUE ~ state),
+    state = factor(state, levels = c("Infections","Hospitalisations","Deaths","Years of life lost"))) %>%
+  #change 2nd dose to primary series and fix factors
+  mutate(dose = case_when(
+    dose == "2nd dose" ~ "Primary series",
+    TRUE ~ dose),
+    dose = factor(dose, levels = c("Primary series", "Booster"))) 
+
+# Generate dynamic breaks for the legend
+min_perc <- min(df_base_plot_val$perc_diff) # Minimum percent difference
+max_perc <- max(df_base_plot_val$perc_diff) # Maximum percent difference
+df_base_plot_val$perc_diff %>% summary
+# Define breaks dynamically based on log-transformed scale
+breaks <-log(seq(min_perc / 100, max_perc / 100, length.out = 5) + 1)
+exp(breaks)
+
+# Define labels dynamically (convert back to percentage differences)
+labels <- ((exp(breaks))) %>% round(1) 
+
+
+FigMain_BaseChg<-df_base_plot_val %>% 
+  ggplot(aes(x=age_mod, y=base_chg)) +
+  geom_tile(aes(fill = log((perc_diff/100)+1))) +
+  theme_bw() +
+  labs(y = "Vaccination coverage change (%)",
+       x = "Age band, years",
+       fill = "Relative difference:",
+  )+
+  
+  scale_fill_gradient2(low = "#1a9850",
+                       mid = ("#f7f7f7"), 
+                       high = "#d73027", 
+                       midpoint = log(1),
+                       breaks = breaks,
+                       labels = labels
+  ) +
+  
+  guides(fill = guide_colorbar(title.position = "left",hjust = 0.5, label.theme = element_text(size = 8))) +
+  scale_y_continuous()+
+  #schift x axis 45 degrees
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_grid(dose~ state,
+             scales = "free_y"
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 14),
+    legend.key.size = unit(0.7, "cm"),
+    #shift y axis labels/ticks down to start at bottom 
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 12),
+    strip.text = element_text(size = 16),
+    strip.background = element_blank(),
+    #make as publishable as possible
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.title.position = "panel",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+FigMain_BaseChg
+
+
+
+
+
+
