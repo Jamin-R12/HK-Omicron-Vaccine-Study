@@ -1,0 +1,175 @@
+
+pacman::p_load(tidyverse,readr,deSolve, data.table,RColorBrewer)
+
+
+#Simulations Epidemic Function based on the modified baseline scenario. 
+
+#Outputs the simulated epidemic data for each thinning iteration, and severe disease infections incidence.
+
+
+##MAIN FUNCTION#########################################################################################################
+EpiWaveSimulation<-function(
+    
+                            SIMULATION,
+                            SAMPLE_DATA,
+                            THINNING=50,
+                            TAU = set.tau, 
+                            END = set.end,
+                            NGM_run=FALSE,
+                            INFECT_RUN=TRUE,
+                            PI_V1 = pi_v1_0,
+                            PI_V2 = pi_v2_0,
+                            PI_V3 = pi_v3_0,
+                            TIME_VARYING_IOTA = time_varying_iota_0,
+                            BASE_1st_COV = base_1st_cov0,
+                            BASE_2nd_COV = base_2nd_cov0,
+                            BASE_3rd_COV = base_3rd_cov0){
+
+  samp_thin<-SAMPLE_DATA%>%
+    group_by(chain)%>%
+    filter(row_number()%%THINNING==0)
+  
+  
+  #mean from model.
+  n.days<-END
+  n.names<-ncol(samp_thin)
+  n.samp<- nrow(samp_thin)
+  
+  Hosp_output       <- data.frame()
+  SCC_output        <- data.frame()
+  Death_output      <- data.frame()
+  Infect_output     <- data.frame()
+  
+  ####loop#######
+  for (k in c(1:nrow(samp_thin))){
+    
+    data.input<-unlist(samp_thin[k,])
+    
+    DaysIndicators_l<-TransRep(
+      beta_age   = data.input[1],
+      iseed      = data.input[2], 
+      pHosp_base = data.input[3:7],
+      pSCC_base  = data.input[8:12],
+      pDeath_base= data.input[13:17],
+      lrrHosp    = data.input[18:29], 
+      lrrSCC     = data.input[30:41],
+      lrrDeath   = data.input[42:53],
+      deltas_l   = data.input[105:119]
+      , store_output=TRUE
+      , pi_v1 = PI_V1
+      , pi_v2 = PI_V2
+      , pi_v3 = PI_V3
+      , time_varying_iota = TIME_VARYING_IOTA
+      , base_1st_cov = BASE_1st_COV
+      , base_2nd_cov = BASE_2nd_COV
+      , base_3rd_cov = BASE_3rd_COV)
+    
+    # colnames(DaysIndicators_l[[2]])<-c('DaysPrev','sd')
+    SEIR_list<-c(DaysIndicators_l[[1]],seir.L.out)
+    
+    #storing SevHealth output data into seperate matrices.
+    lapply(SEIR_list , function(matrix_data){
+      dt              <- as.data.table(cbind(day = 1:nrow(matrix_data),matrix_data))
+      dt.lg           <- melt(dt, id.vars = 'day', variable.name = "name", value.name = "value")
+      dt.lg$samp_thin <- k
+      dt.lg$chain     <-samp_thin[k,'chain']
+      
+      
+      
+      if (identical(matrix_data, SEIR_list[[1]])) {
+        dt.lg<-dt.lg %>%
+          group_by(samp_thin,chain,name) %>%
+          summarise(value = sum(value))
+        
+        Hosp_output <<- rbind(Hosp_output, dt.lg)
+        
+      } else if (identical(matrix_data, SEIR_list[[2]])) {
+        dt.lg<-dt.lg %>%
+          group_by(samp_thin,chain,name) %>%
+          summarise(value = sum(value))
+        SCC_output <<- rbind(SCC_output, dt.lg)
+        
+      } else if (identical(matrix_data, SEIR_list[[3]])) {
+        dt.lg<-dt.lg %>%
+          group_by(samp_thin,chain,name) %>%
+          summarise(value = sum(value))
+        Death_output <<- rbind(Death_output, dt.lg)
+        
+      }else if (identical(matrix_data, SEIR_list[[5]])) {
+        Infect_output <<- rbind(Infect_output, dt.lg)
+        
+      }
+    })
+    
+    print(paste0(k,'/',nrow(samp_thin)))
+  }
+  
+  # clean up first one.
+  Infect_output_int<-Infect_output%>%
+    mutate(
+      dose = str_extract(name, "d\\d"),
+      name =  gsub("\\.0_5", "\\.a1", name),
+      name =  gsub("6_11", "a1", name),
+      name =  gsub("12_17", "a1", name),
+      name =  gsub("18_29", "a2", name),
+      name =  gsub("30_39", "a2", name),
+      name =  gsub("40_49", "a3", name),
+      name =  gsub("50_59", "a3", name),
+      name =  gsub("60_69", "a4", name),
+      name =  gsub("70_79", "a4", name),
+      name =  gsub("80+", "a5", name),
+      age = str_extract(name, "a\\d"),
+      name2 = paste0(age,dose)
+    )%>%
+    group_by(day, name2,samp_thin,chain)%>%
+    summarise(value = sum(value))%>%
+    group_by(name2,samp_thin,chain) %>% 
+    arrange(day) %>% 
+    mutate(new_infec = ifelse(row_number()==1,value, value - lag(value))) %>% 
+    group_by(name2,samp_thin,chain) %>%
+    summarise(value = sum(new_infec))
+
+  
+
+  if(SKIP_OUTPUT==FALSE){
+    
+    #_______#####
+    #----return output---##############
+    state_output<-Infect_output_int %>%
+      rename(name = name2) %>%
+      group_by(name, samp_thin) %>%
+      mutate(name = str_extract(name, "a\\dd\\d"),
+             age = str_extract(name, "a[0-9]"),
+             state = 'conv_infect')%>%
+      bind_rows(
+        Hosp_output %>%
+          data.frame() %>%
+          group_by(name,samp_thin) %>%
+          mutate(name  = str_extract(name, "a\\dd\\d"),
+                 age   = str_extract(name, "a[0-9]"),
+                 state = 'hosp')) %>%
+      bind_rows(
+        Death_output %>%
+          data.frame() %>%
+          group_by(name,samp_thin) %>%
+          mutate(name = str_extract(name, "a\\dd\\d"),
+                 age = str_extract(name, "a[0-9]"),
+                 state = 'death')) %>%
+      bind_rows(
+        SCC_output %>%
+          data.frame() %>%
+          group_by(name,samp_thin) %>%
+          mutate(name = str_extract(name, "a\\dd\\d"),
+                 age = str_extract(name, "a[0-9]"),
+                 state = 'scc')
+      )
+    
+  }
+  
+  return(
+    list(
+      state_output = state_output
+    )
+  )
+  
+}
