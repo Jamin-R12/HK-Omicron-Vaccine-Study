@@ -41,7 +41,7 @@ Plots a range of calibrated model parameters, baseline risk of severe disease, v
 
 #### 1.7 Fig/Fig_BaseChange.R
 
-Plots coutnerfactual simulations results from the Sims_VacBasChg.R
+Plots counterfactual simulations across shifted baseline coverages outputted from the Sims_VacBasChg.R
 Output:geom_tile plot. 
 
 
